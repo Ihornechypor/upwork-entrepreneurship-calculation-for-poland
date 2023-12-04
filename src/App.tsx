@@ -9,11 +9,11 @@ function App() {
       <GlobalStyle />
       <Main>
         <Section>
-          <h1>Get cross curensy PLN</h1>
+          <h1>Paste csv code inside textarea</h1>
           <Controller />
         </Section>
       </Main>
-      <Footer>Footer</Footer>
+      <Footer>Tool to calculate unregistred entrepreneurship for Poland for Upwork users</Footer>
     </>
   );
 }

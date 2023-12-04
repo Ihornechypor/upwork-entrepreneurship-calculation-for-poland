@@ -1,7 +1,8 @@
 import { TotalData } from '../../types';
+import * as Styled from './ResultTotal.styles';
 
 export const ResultTotal = ({ totalData }: { totalData: TotalData }) => (
-  <div>
+  <Styled.ResultTotal>
     <p>
       <b>Total Incum</b>: {totalData.amountOfIncum}
     </p>
@@ -20,5 +21,5 @@ export const ResultTotal = ({ totalData }: { totalData: TotalData }) => (
     <p>
       <b>Total to spend and Vat</b>: {totalData.ammoutClearAndVat}
     </p>
-  </div>
+  </Styled.ResultTotal>
 );

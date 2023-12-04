@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { getCurrecyRate } from '../../api/getCurrecyRate';
-import { subDays, parse } from 'date-fns';
 import Papa from 'papaparse';
-import { reformatDate, updateSubDays, calculateLocalAmounts } from '../../helpers';
+import { reformatDate, minusDay, getDateRange, calculateLocalAmounts, findNearestRate } from '../../helpers';
 import { API_DATE_FORMAT, CSV_DATE_FORMAT } from '../../consts';
-import { RateItem, ApiDataItem, CsvData } from '../../types';
+import { RateItem, CsvData, ApiRates } from '../../types';
 import { ResultTable } from '../ResultTable';
 import { ResultTotal } from '../ResultTotal';
+import { Button, ErrorMsg } from '../UI';
 
 const Controller = () => {
   const [hasMounted, setHasMounted] = useState(false);
-  const [rate, setRate] = useState<RateItem[]>([]);
-  const [apiData, setApiData] = useState<ApiDataItem[]>([]);
+  const [dataFetched, setDataFetched] = useState(false);
+  const [error, setError] = useState('');
+  const [initialData, setInitialData] = useState<RateItem[]>([]);
+  const [rates, setRates] = useState<RateItem[]>([]);
   const [totalData, setTotalData] = useState({
     amountOfIncum: 0,
     amountOfCosts: 0,
@@ -20,111 +22,30 @@ const Controller = () => {
     ammoutClear: 0,
     ammoutClearAndVat: 0,
   });
-  // csv
+  const [apiRates, setApiRate] = useState<ApiRates[]>([{ effectiveDate: '', mid: 0 }]);
   const [csvData, setCsvData] = useState<string>('');
 
-  const fetchData = async (formatedDate: string): Promise<void> => {
-    let currentDate = formatedDate;
-    let retryCount = 0;
-    while (retryCount < 6) {
-      try {
-        const data = await getCurrecyRate(currentDate, formatedDate);
-        if (data && data.formatedDate) {
-          setApiData((prev) => [...prev, data]);
-          break;
-        } else {
-          console.error('Empty or invalid API response');
-        }
-      } catch (error) {
-        const subDay = subDays(parse(currentDate, API_DATE_FORMAT, new Date()), 1);
-
-        currentDate = reformatDate(subDay, API_DATE_FORMAT);
-        retryCount += 1;
-      }
-    }
-  };
-
   const handleDate = (date: string): string => {
-    const prevDate = updateSubDays(date, 1, CSV_DATE_FORMAT);
+    const prevDate = minusDay(date, 1, CSV_DATE_FORMAT);
     const dateForApi = reformatDate(prevDate, API_DATE_FORMAT);
-
-    // fetchData(dateForApi);
-
     return dateForApi;
   };
 
-  useEffect(() => {
-    if (hasMounted) {
-      const onlyPayments = rate.filter(
-        (item) => item.type === 'Fixed Price' || item.type === 'Hourly' || item.type === 'Bonus',
-      );
-
-      const ifAdditionalCosts = rate
-        .filter((item) => item.type === 'Membership Fee' || item.type === 'Withdrawal Fee')
-        .reduce((acc, currentValue) => acc + currentValue.amountLocal, 0);
-
-      const amountOfIncum = onlyPayments.reduce((acc, currentValue) => acc + currentValue.amountLocal, 0);
-      const amountOfCosts =
-        rate.reduce((acc, currentValue) => acc + currentValue.amountFeeLocal, 0) + ifAdditionalCosts;
-      const amountOfCostsWithVat = rate.reduce(
-        (acc, currentValue) => acc + currentValue.amountFeeLocal + currentValue.amountFeeVat,
-        0 + ifAdditionalCosts,
-      );
-
-      const ammountOfFeeOfVat = rate.reduce((acc, currentValue) => acc + currentValue.amountFeeVat, 0);
-
-      const ammoutClear = amountOfIncum + amountOfCosts;
-      const ammoutClearAndVat = amountOfIncum + amountOfCostsWithVat;
-
-      setTotalData({
-        amountOfIncum,
-        amountOfCosts,
-        amountOfCostsWithVat,
-        ammountOfFeeOfVat,
-        ammoutClear,
-        ammoutClearAndVat,
-      });
-    } else {
-      setHasMounted(true);
+  const getRatesRange = async (dateStart: string, dateEnd: string) => {
+    try {
+      const rates = await getCurrecyRate(dateStart, dateEnd);
+      setApiRate((prev) => [...prev, ...rates]);
+    } catch (error) {
+      setError(`Error to fetch api:${error}`);
     }
-  }, [rate, hasMounted]);
-
-  useEffect(() => {
-    if (hasMounted) {
-      if (apiData.length === rate.length) {
-        const sortedByDays = [...apiData].sort(
-          (a, b) =>
-            parse(b.formatedDate, API_DATE_FORMAT, new Date()).getTime() -
-            parse(a.formatedDate, API_DATE_FORMAT, new Date()).getTime(),
-        );
-        const compairedArray = rate.map((item, index) => {
-          const currentDate = parse(sortedByDays[index].formatedDate, API_DATE_FORMAT, new Date());
-          const amount = item.amount;
-          const currecyRate = sortedByDays[index].currecyRate;
-          const type = item.type;
-
-          if (currentDate && !isNaN(amount) && !isNaN(currecyRate)) {
-            return {
-              ...item,
-              ...sortedByDays[index],
-              ...calculateLocalAmounts(amount, currecyRate, type),
-            };
-          } else {
-            console.error('Invalid data for calculation:', item, sortedByDays[index]);
-            return item;
-          }
-        });
-
-        setRate(compairedArray);
-      }
-    } else {
-      setHasMounted(true);
-    }
-  }, [apiData]);
+  };
 
   const handleReset = () => {
-    setRate([]);
-    setApiData([]);
+    setInitialData([]);
+    setRates([]);
+    setApiRate([]);
+    setDataFetched(false);
+    setError('');
     console.clear();
   };
 
@@ -143,21 +64,22 @@ const Controller = () => {
               item.Type === 'Withdrawal Fee',
           );
 
-          const filteredArray = flArr.map((obj) => ({
-            initialDate: obj.Date,
-            type: obj.Type,
-            description: obj.Description,
-            formatedDate: handleDate(obj.Date),
-            amount: Number(obj.Amount),
-            amountFee: 0,
-            amountLocal: 0,
-            amountFeeLocal: 0,
-            amountFeeVat: 0,
-            currecyDate: '',
-            currecyRate: 0,
-          }));
-
-          setRate(filteredArray);
+          const filteredArray = flArr
+            .map((obj) => ({
+              initialDate: obj.Date,
+              type: obj.Type,
+              description: obj.Description,
+              formatedDate: handleDate(obj.Date),
+              amount: Number(obj.Amount),
+              amountFee: 0,
+              amountLocal: 0,
+              amountFeeLocal: 0,
+              amountFeeVat: 0,
+              currecyDate: '',
+              currecyRate: 0,
+            }))
+            .reverse();
+          setInitialData(filteredArray);
         },
         header: true,
         transformHeader: function (h) {
@@ -165,22 +87,111 @@ const Controller = () => {
         },
       });
     } catch (error) {
+      setError(`Error parsing CSV:${error}`);
       console.error('Error parsing CSV:', error);
     }
   };
 
+  // calculate data
+  useEffect(() => {
+    if (apiRates && dataFetched) {
+      const ratesMap = new Map(apiRates.map((item) => [item.effectiveDate, item]));
+
+      const mergedArray = initialData.map((item) => {
+        const formattedDate = item.formatedDate;
+        const rateObject = ratesMap.get(formattedDate) || findNearestRate(ratesMap, formattedDate);
+        const rate = rateObject.mid;
+        const currecyDate = rateObject.effectiveDate;
+
+        return {
+          ...item,
+          currecyDate,
+          currecyRate: rate,
+          ...calculateLocalAmounts(item.amount, rate, item.type),
+        };
+      });
+
+      setRates((prev) => [
+        ...prev,
+        ...mergedArray.map((item) => ({
+          ...item,
+          currecyDate: String(item.currecyDate),
+        })),
+      ]);
+    }
+  }, [apiRates, dataFetched]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (initialData.length !== 0) {
+        for (const item of getDateRange(initialData)) {
+          await getRatesRange(item.dateStart, item.dateEnd);
+        }
+        setDataFetched(true);
+      }
+    };
+
+    fetchData();
+  }, [initialData]);
+
+  // calculate total
+  useEffect(() => {
+    if (hasMounted) {
+      const onlyPayments = rates.filter(
+        (item) => item.type === 'Fixed Price' || item.type === 'Hourly' || item.type === 'Bonus',
+      );
+
+      const ifAdditionalCosts = rates
+        .filter((item) => item.type === 'Membership Fee' || item.type === 'Withdrawal Fee')
+        .reduce((acc, currentValue) => acc + currentValue.amountLocal, 0);
+
+      const amountOfIncum = onlyPayments.reduce((acc, currentValue) => acc + currentValue.amountLocal, 0);
+
+      const amountOfCosts =
+        rates.reduce((acc, currentValue) => acc + currentValue.amountFeeLocal, 0) + ifAdditionalCosts;
+      const amountOfCostsWithVat = rates.reduce(
+        (acc, currentValue) => acc + currentValue.amountFeeLocal + currentValue.amountFeeVat,
+        0 + ifAdditionalCosts,
+      );
+
+      const ammountOfFeeOfVat = rates.reduce((acc, currentValue) => acc + currentValue.amountFeeVat, 0);
+
+      const ammoutClear = amountOfIncum + amountOfCosts;
+      const ammoutClearAndVat = amountOfIncum + amountOfCostsWithVat;
+
+      setTotalData({
+        amountOfIncum,
+        amountOfCosts,
+        amountOfCostsWithVat,
+        ammountOfFeeOfVat,
+        ammoutClear,
+        ammoutClearAndVat,
+      });
+    } else {
+      setHasMounted(true);
+    }
+  }, [rates]);
+
   return (
     <>
-      <p>
-        Currency: <br />
-      </p>
-      <br />
       <textarea value={csvData} onChange={handleCsvInputChange} placeholder="Paste CSV data here" rows={5} cols={50} />
-      <br />
-      <button onClick={parseCSVToArray}>Load csv</button>
-      <button onClick={handleReset}>Reset List</button>
-      <ResultTable rate={rate} />
-      <ResultTotal totalData={totalData} />
+
+      <div>
+        <Button onClick={parseCSVToArray} disabled={dataFetched}>
+          Load csv
+        </Button>
+        &nbsp;
+        <Button onClick={handleReset} disabled={!dataFetched}>
+          Reset Data
+        </Button>
+      </div>
+      {error ? <ErrorMsg>{error}</ErrorMsg> : null}
+      {dataFetched ? (
+        <>
+          <ResultTotal totalData={totalData} />
+          <ResultTable rate={rates} />
+        </>
+      ) : null}
     </>
   );
 };

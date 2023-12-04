@@ -1,8 +1,8 @@
 import { RateItem } from '../../types';
-
+import * as Styled from './ResultTable.styles';
 export const ResultTable = ({ rate }: { rate: RateItem[] }) => {
   return (
-    <table>
+    <Styled.ResultTable>
       <thead>
         <tr>
           <th>CSV Date:</th>
@@ -33,6 +33,6 @@ export const ResultTable = ({ rate }: { rate: RateItem[] }) => {
           </tr>
         ))}
       </tbody>
-    </table>
+    </Styled.ResultTable>
   );
 };
